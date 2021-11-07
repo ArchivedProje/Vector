@@ -40,7 +40,7 @@ TEST(Vector, Copy) {
     {
         Vector<int> v1;
         EXPECT_TRUE(v1.empty());
-        EXPECT_EQ(v1.size(), 1);
+        EXPECT_EQ(v1.size(), 0);
         EXPECT_EQ(v1.capacity(), 0);
         Vector<int> v2(v1);
         EXPECT_TRUE(v2.empty());
