@@ -6,22 +6,47 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <memory>
 
 #include <Iterator.h>
 #include <Reverse_iterator.h>
 
-template<class T>
+template<typename T, typename Allocator = std::allocator<T>>
 class Vector {
 private:
     T *data_;
     size_t size_;
     size_t capacity_;
+    Allocator allocator_;
+    using AllocTraits = std::allocator_traits<Allocator>;
 
-    void update_capacity() {
-        if (capacity_ == 0) {
-            capacity_ = 1;
-        } else {
-            capacity_ *= 2;
+    void try_construct(size_t start, size_t end, size_t arr_size, T* lhs, T* rhs) {
+        size_t i = start;
+        try {
+            for (; i < end; ++i) {
+                AllocTraits::construct(allocator_, lhs + i, rhs[i]);
+            }
+        } catch (...) {
+            for (size_t j = 0; j < i; ++j) {
+                AllocTraits::destroy(allocator_, lhs + j);
+            }
+            AllocTraits::deallocate(allocator_, lhs, arr_size);
+            throw;
+        }
+    }
+
+    void try_construct(size_t start, size_t end, size_t arr_size, T* lhs, const T& value) {
+        size_t i = start;
+        try {
+            for (; i < end; ++i) {
+                AllocTraits::construct(allocator_, lhs + i, value);
+            }
+        } catch (...) {
+            for (size_t j = 0; j < i; ++j) {
+                AllocTraits::destroy(allocator_, lhs + j);
+            }
+            AllocTraits::deallocate(allocator_, lhs, arr_size);
+            throw;
         }
     }
 
@@ -36,24 +61,23 @@ public:
 
     Vector() : data_(nullptr), size_(0), capacity_(0) {}
 
-    explicit Vector(size_t _size)
-            : data_(new T[_size]), size_(_size), capacity_(_size) {}
-
-    Vector(size_t _size, const T &value)
-            : data_(new T[_size]), size_(_size), capacity_(_size) {
-        std::fill(data_, data_ + size_, value);
+    Vector(size_t _size, const T &value = T(), const Allocator &allocator = Allocator())
+            : size_(_size), capacity_(_size), allocator_(allocator) {
+        data_ = AllocTraits::allocate(allocator_, size_);
+        try_construct(0, size_, capacity_, data_, value);
     }
 
     Vector(size_t _size, const T *_data)
-            : data_(new T[_size]), size_(_size), capacity_(_size) {
+            : data_(AllocTraits::allocate(allocator_, _size)), size_(_size), capacity_(_size) {
         std::copy(_data, _data + _size, data_);
     }
 
     Vector(const Vector &rhs)
-            : data_(new T[rhs.capacity_]),
-              size_(rhs.size_),
-              capacity_(rhs.capacity_) {
-        std::copy(rhs.data_, rhs.data_ + rhs.size_, data_);
+            : size_(rhs.size_),
+              capacity_(rhs.capacity_),
+              allocator_(rhs.allocator_) {
+        data_ = AllocTraits::allocate(allocator_, capacity_);
+        try_construct(0, size_, capacity_, data_, rhs.data_);
     }
 
     Vector(Vector &&rhs) noexcept: data_(rhs.data_), size_(rhs.size_), capacity_(rhs.capacity_) {
@@ -62,15 +86,20 @@ public:
         rhs.capacity_ = 0;
     }
 
-    ~Vector() { delete[] data_; }
+    ~Vector() {
+        for (size_t i = 0; i < size_; ++i) {
+            AllocTraits::destroy(allocator_, data_ + i);
+        }
+        AllocTraits::deallocate(allocator_, data_, capacity_);
+    }
 
     Vector &operator=(const Vector &rhs) {
         if (this != &rhs) {
-            delete[] data_;
+            ~Vector();
             size_ = rhs.size_;
             capacity_ = rhs.capacity_;
-            data_ = new T[capacity_];
-            std::copy(rhs.data_, rhs.data_ + rhs.size_, data_);
+            data_ = AllocTraits::allocate(allocator_, capacity_);
+            try_construct(0, size_, capacity_, data_, rhs.data_);
         }
         return *this;
     }
@@ -109,22 +138,22 @@ public:
     size_t capacity() const noexcept { return capacity_; }
 
     void clear() {
-        delete[] data_;
-        data_ = nullptr;
+        for (size_t i = 0; i < size_; ++i) {
+            AllocTraits::destroy(allocator_, data_ + i);
+        }
         size_ = 0;
-        capacity_ = 0;
     }
 
-    void reserve(const size_t new_capacity) {
-        if (new_capacity > capacity_) {
-            T *tmp = new T[size_];
-            std::copy(data_, data_ + size_, tmp);
-            delete[] data_;
-            data_ = new T[new_capacity];
-            capacity_ = new_capacity;
-            std::copy(tmp, tmp + size_, data_);
-            delete[] tmp;
+    void reserve(size_t new_capacity) {
+        if (new_capacity <= capacity_) return;
+        T *tmp = AllocTraits::allocate(allocator_, new_capacity);
+        try_construct(0, size_, new_capacity, tmp, data_);
+        for (size_t i = 0; i < size_; ++i) {
+            AllocTraits::destroy(allocator_, data_ + i);
         }
+        AllocTraits::deallocate(allocator_, data_, capacity_);
+        data_ = tmp;
+        capacity_ = new_capacity;
     }
 
     constexpr iterator begin() noexcept { return iterator(data_); }
@@ -143,60 +172,54 @@ public:
 
     constexpr const_reverse_iterator crend() const noexcept { return const_reverse_iterator(data_ + size_); }
 
-    constexpr iterator insert(iterator &position, const T &value) {
+    iterator insert(iterator &position, const T &value) {
         if (position >= Iterator(data_ + size_)) {
             throw std::out_of_range("Iterator out of range");
         }
         if (capacity_ == size_) {
-            update_capacity();
+            if (capacity_ == 0) ++capacity_;
+            capacity_ *= 2;
         }
-        T *tmp = new T[capacity_];
-        auto distance = std::distance(begin(), position);
-        std::copy(data_, data_ + distance, tmp);
-        tmp[distance] = value;
-        std::copy(data_ + distance, data_ + size_, tmp + distance + 1);
+        T *tmp = AllocTraits::allocate(allocator_, capacity_);
+        auto distance = static_cast<size_t>(std::distance(begin(), position));
+        try_construct(0, distance, capacity_, tmp, data_);
+        AllocTraits::construct(allocator_, tmp + distance, value);
+        try_construct(distance + 1, size_, capacity_, tmp, data_);
+        for (size_t i = 0; i < size_; ++i) {
+            AllocTraits::destroy(allocator_, data_ + i);
+        }
+        AllocTraits::deallocate(allocator_, data_, capacity_);
+        data_ = tmp;
         ++size_;
-        delete[] data_;
-        data_ = new T[capacity_];
-        std::copy(tmp, tmp + size_, data_);
-        delete[] tmp;
         return Iterator(data_ + distance);
     }
 
     constexpr void push_back(const T &value) {
         if (capacity_ == size_) {
-            update_capacity();
-            T *tmp = new T[size_];
-            std::copy(data_, data_ + size_, tmp);
-            delete[] data_;
-            data_ = new T[capacity_];
-            std::copy(tmp, tmp + size_, data_);
-            delete[] tmp;
+            reserve(2 * capacity_);
         }
-        data_[size_] = value;
+        AllocTraits::construct(allocator_, data_ + size_, value);
         ++size_;
     }
 
-    constexpr void push_back(T&& value) {
+    constexpr void push_back(T &&value) {
         if (capacity_ == size_) {
-            update_capacity();
-            T *tmp = new T[size_];
-            std::copy(data_, data_ + size_, tmp);
-            delete[] data_;
-            data_ = new T[capacity_];
-            std::copy(tmp, tmp + size_, data_);
-            delete[] tmp;
+            if (capacity_ == 0) ++capacity_;
+            reserve(2 * capacity_);
         }
-        data_[size_] = std::move(value);
+        AllocTraits::construct(allocator_, data_ + size_, std::move(value));
         ++size_;
     }
 
-    template <typename ... Args>
-    constexpr void emplace_back(Args&&... value) {
+    template<typename ... Args>
+    constexpr void emplace_back(Args &&... value) {
         push_back(T(std::forward<Args>(value)...));
     }
 
-    constexpr void pop_back() { --size_; }
+    constexpr void pop_back() {
+        AllocTraits::destroy(allocator_, data_ + size_ - 1);
+        --size_;
+    }
 
     constexpr void swap(Vector<T> &rhs) {
         std::swap(data_, rhs.data_);
