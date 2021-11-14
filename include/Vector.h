@@ -104,18 +104,18 @@ public:
         return *this;
     }
 
-    const T &operator[](const size_t index) const { return data_[index]; }
+    const T &operator[](size_t index) const { return data_[index]; }
 
-    T &operator[](const size_t index) { return data_[index]; }
+    T &operator[](size_t index) { return data_[index]; }
 
-    const T &at(const size_t index) const {
+    const T &at(size_t index) const {
         if (index < size_) {
             return data_[index];
         }
         throw std::out_of_range("Index out of range");
     }
 
-    T &at(const size_t index) {
+    T &at(size_t index) {
         return const_cast<T &>(static_cast<const Vector<T> &>(*this).at(index));
     }
 
