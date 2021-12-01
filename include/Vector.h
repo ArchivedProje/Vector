@@ -20,7 +20,7 @@ private:
     Allocator allocator_;
     using AllocTraits = std::allocator_traits<Allocator>;
 
-    void try_construct(size_t start, size_t end, size_t arr_size, T* lhs, T* rhs) {
+    void try_construct(size_t start, size_t end, size_t arr_size, T *lhs, T *rhs) {
         size_t i = start;
         try {
             for (; i < end; ++i) {
@@ -35,11 +35,26 @@ private:
         }
     }
 
-    void try_construct(size_t start, size_t end, size_t arr_size, T* lhs, const T& value) {
+    void try_construct(size_t start, size_t end, size_t arr_size, T *lhs, const T &value) {
         size_t i = start;
         try {
             for (; i < end; ++i) {
                 AllocTraits::construct(allocator_, lhs + i, value);
+            }
+        } catch (...) {
+            for (size_t j = 0; j < i; ++j) {
+                AllocTraits::destroy(allocator_, lhs + j);
+            }
+            AllocTraits::deallocate(allocator_, lhs, arr_size);
+            throw;
+        }
+    }
+
+    void try_construct(size_t start, size_t end, size_t arr_size, T *lhs, T &&value) {
+        size_t i = start;
+        try {
+            for (; i < end; ++i) {
+                AllocTraits::construct(allocator_, lhs + i, std::move(value));
             }
         } catch (...) {
             for (size_t j = 0; j < i; ++j) {
@@ -88,7 +103,7 @@ public:
 
     ~Vector() {
         for (size_t i = 0; i < size_; ++i) {
-            AllocTraits::destroy(allocator_, data_ + i);
+            pop_back();
         }
         AllocTraits::deallocate(allocator_, data_, capacity_);
     }
@@ -96,10 +111,29 @@ public:
     Vector &operator=(const Vector &rhs) {
         if (this != &rhs) {
             ~Vector();
+            if (AllocTraits::propagate_on_container_copy_assignment::value
+                && allocator_ != rhs.allocator_) {
+                allocator_ = rhs.allocator_;
+            }
             size_ = rhs.size_;
             capacity_ = rhs.capacity_;
             data_ = AllocTraits::allocate(allocator_, capacity_);
             try_construct(0, size_, capacity_, data_, rhs.data_);
+        }
+        return *this;
+    }
+
+    Vector& operator=(Vector&& rhs)  noexcept {
+        if (this != &rhs) {
+            ~Vector();
+            if (AllocTraits::propagate_on_container_copy_assignment::value
+                && allocator_ != rhs.allocator_) {
+                allocator_ = rhs.allocator_;
+            }
+            size_ = rhs.size_;
+            capacity_ = rhs.capacity_;
+            data_ = AllocTraits::allocate(allocator_, capacity_);
+            try_construct(0, size_, capacity_, data_, std::move(rhs.data_));
         }
         return *this;
     }

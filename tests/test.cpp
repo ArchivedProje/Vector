@@ -5,6 +5,11 @@
 #include <string>
 #include <type_traits>
 
+TEST(Vector, CopyAndMoveAssignable) {
+    EXPECT_TRUE(std::is_move_constructible<Vector<int>>::value);
+    EXPECT_TRUE(std::is_copy_assignable<Vector<int>>::value);
+}
+
 TEST(Vector, ConstructAssign) {
     {
         Vector<size_t> vec;
